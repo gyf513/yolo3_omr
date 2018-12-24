@@ -3,7 +3,7 @@ import math
 import os
 import random
 from sys import platform
-
+from utils.utils import load_classes
 import cv2
 import numpy as np
 import torch
@@ -44,6 +44,7 @@ class load_images():  # for inference
         img = cv2.imread(img_path)  # BGR
 
         # Padded resize
+        #import pdb;pdb.set_trace()
         img, _, _, _ = resize_square(img, height=self.height, color=(127.5, 127.5, 127.5))
 
         # Normalize RGB
@@ -70,7 +71,7 @@ class load_images_and_labels():  # for training
             self.img_files = [path.replace('\n', '').replace('/images', '/Users/glennjocher/Downloads/data/coco/images')
                               for path in self.img_files]
         else:  # linux (gcp cloud)
-            self.img_files = [path.replace('\n', '').replace('/images', '../coco/images') for path in self.img_files]
+            self.img_files = [path.replace('\n', '')for path in self.img_files]
 
         self.label_files = [path.replace('images', 'labels').replace('.png', '.txt').replace('.jpg', '.txt') for path in
                             self.img_files]
@@ -116,8 +117,9 @@ class load_images_and_labels():  # for training
 
             img = cv2.imread(img_path)  # BGR
             if img is None:
+                print('nooooooooooimages')
                 continue
-
+            
             augment_hsv = True
             if self.augment and augment_hsv:
                 # SV augmentation by 50%
@@ -144,21 +146,34 @@ class load_images_and_labels():  # for training
             img, ratio, padw, padh = resize_square(img, height=height, color=(127.5, 127.5, 127.5))
 
             # Load labels
+            name_classes = load_classes('/home/jiaxiang/myproject/yolov3/cfg/duration.names')
             if os.path.isfile(label_path):
-                labels0 = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 5)
 
+                labels0 = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 6)
                 # Normalized xywh to pixel xyxy format
                 labels = labels0.copy()
                 labels[:, 1] = ratio * w * (labels0[:, 1] - labels0[:, 3] / 2) + padw
                 labels[:, 2] = ratio * h * (labels0[:, 2] - labels0[:, 4] / 2) + padh
                 labels[:, 3] = ratio * w * (labels0[:, 1] + labels0[:, 3] / 2) + padw
                 labels[:, 4] = ratio * h * (labels0[:, 2] + labels0[:, 4] / 2) + padh
+                durations = []
+                for i in labels0[:,5]:
+                   if float(i)==float(1):
+                       durations.append(9)  
+                   elif str(i) not in name_classes and str(i)!='0.0':
+                       durations.append(6)
+                   else:
+                       for idx,j in enumerate(name_classes):
+                          if float(i)== float(j):
+                             durations.append(idx)
+
+                labels[:, 5] = durations                      
             else:
                 labels = np.array([])
 
             # Augment image and labels
             if self.augment:
-                img, labels, M = random_affine(img, labels, degrees=(-5, 5), translate=(0.2, 0.2), scale=(0.8, 1.2))
+                img, labels, M = random_affine(img, labels, degrees=(-3, 3), translate=(0.1, 0.1), scale=(0.9, 1.1))
 
             plotFlag = False
             if plotFlag:
@@ -192,12 +207,12 @@ class load_images_and_labels():  # for training
             labels_all.append(torch.from_numpy(labels))
 
         # Normalize
+        assert len(img_all)!=0
         img_all = np.stack(img_all)[:, :, :, ::-1].transpose(0, 3, 1, 2)  # BGR to RGB and cv2 to pytorch
         img_all = np.ascontiguousarray(img_all, dtype=np.float32)
         # img_all -= self.rgb_mean
         # img_all /= self.rgb_std
         img_all /= 255.0
-
         return torch.from_numpy(img_all), labels_all
 
     def __len__(self):
@@ -216,7 +231,7 @@ def resize_square(img, height=416, color=(0, 0, 0)):  # resize a rectangular ima
     return cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color), ratio, dw // 2, dh // 2
 
 
-def random_affine(img, targets=None, degrees=(-10, 10), translate=(.1, .1), scale=(.9, 1.1), shear=(-3, 3),
+def random_affine(img, targets=None, degrees=(-3, 3), translate=(.1, .1), scale=(.9, 1.1), shear=(-3, 3),
                   borderValue=(127.5, 127.5, 127.5)):
     # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(.1, .1), scale=(.9, 1.1), shear=(-10, 10))
     # https://medium.com/uruvideo/dataset-augmentation-with-random-homographies-a8f4b44830d4

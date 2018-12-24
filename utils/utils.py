@@ -45,13 +45,14 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None):  # Plots 
     tl = line_thickness or round(0.002 * max(img.shape[0:2])) + 1  # line thickness
     color = color or [random.randint(0, 255) for _ in range(3)]
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-    cv2.rectangle(img, c1, c2, color, thickness=tl)
+    cv2.rectangle(img, c1, c2, color, thickness=1)
     if label:
         tf = max(tl - 1, 1)  # font thickness
-        t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
+        tf = 1
+        t_size = cv2.getTextSize(label, 0, fontScale=1, thickness=tf)[0]
         c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
-        cv2.rectangle(img, c1, c2, color, -1)  # filled
-        cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
+        #cv2.rectangle(img, c1, c2, color, 1)  # filled
+        cv2.putText(img, label, (c1[0], c1[1] - 2), 0,0.25, color, thickness=tf, lineType=cv2.LINE_AA)
 
 
 def weights_init_normal(m):
@@ -194,21 +195,22 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
 
 def build_targets(pred_boxes, pred_conf, pred_cls, target, anchor_wh, nA, nC, nG, batch_report):
     """
-    returns nT, nCorrect, tx, ty, tw, th, tconf, tcls
+    returns nT, nCorrect, tx, ty, tw, th, tconf, tcls,tduration
     """
     nB = len(target)  # number of images in batch
-    nT = [len(x) for x in target]  # torch.argmin(target[:, :, 4], 1)  # targets per image
+    nT = [len(x) for x in target]  # torch.argmin(target[:, :, 5)  # targets per image
     tx = torch.zeros(nB, nA, nG, nG)  # batch size (4), number of anchors (3), number of grid points (13)
     ty = torch.zeros(nB, nA, nG, nG)
     tw = torch.zeros(nB, nA, nG, nG)
     th = torch.zeros(nB, nA, nG, nG)
     tconf = torch.ByteTensor(nB, nA, nG, nG).fill_(0)
     tcls = torch.ByteTensor(nB, nA, nG, nG, nC).fill_(0)  # nC = number of classes
+    tduration = torch.ByteTensor(nB,nA,nG,nG,10).fill_(0)
     TP = torch.ByteTensor(nB, max(nT)).fill_(0)
     FP = torch.ByteTensor(nB, max(nT)).fill_(0)
     FN = torch.ByteTensor(nB, max(nT)).fill_(0)
     TC = torch.ShortTensor(nB, max(nT)).fill_(-1)  # target category
-
+    TD = torch.ShortTensor(nB,max(nT)).fill_(-1)
     for b in range(nB):
         nTb = nT[b]  # number of targets
         if nTb == 0:
@@ -216,9 +218,8 @@ def build_targets(pred_boxes, pred_conf, pred_cls, target, anchor_wh, nA, nC, nG
         t = target[b]
         if batch_report:
             FN[b, :nTb] = 1
-
         # Convert to position relative to box
-        TC[b, :nTb], gx, gy, gw, gh = t[:, 0].long(), t[:, 1] * nG, t[:, 2] * nG, t[:, 3] * nG, t[:, 4] * nG
+        TC[b, :nTb], gx, gy, gw, gh,_ = t[:, 0].long(), t[:, 1] * nG, t[:, 2] * nG, t[:, 3] * nG, t[:, 4] * nG,t[:,5].long()
         # Get grid box indices and prevent overflows (i.e. 13.01 on 13 anchors)
         gi = torch.clamp(gx.long(), min=0, max=nG - 1)
         gj = torch.clamp(gy.long(), min=0, max=nG - 1)
@@ -249,14 +250,14 @@ def build_targets(pred_boxes, pred_conf, pred_cls, target, anchor_wh, nA, nC, nG
 
             a, gj, gi, t = a[i], gj[i], gi[i], t[i]
             if len(t.shape) == 1:
-                t = t.view(1, 5)
+                t = t.view(1, 6)
         else:
             if iou_anch_best < 0.10:
                 continue
             i = 0
 
-        tc, gx, gy, gw, gh = t[:, 0].long(), t[:, 1] * nG, t[:, 2] * nG, t[:, 3] * nG, t[:, 4] * nG
-
+        tc, gx, gy, gw, gh,td = t[:, 0].long(), t[:, 1] * nG, t[:, 2] * nG, t[:, 3] * nG, t[:, 4] * nG,t[:,5].long()
+        
         # Coordinates
         tx[b, a, gj, gi] = gx - gi.float()
         ty[b, a, gj, gi] = gy - gj.float()
@@ -268,11 +269,10 @@ def build_targets(pred_boxes, pred_conf, pred_cls, target, anchor_wh, nA, nC, nG
         # Width and height (power method)
         # tw[b, a, gj, gi] = torch.sqrt(gw / anchor_wh[a, 0]) / 2
         # th[b, a, gj, gi] = torch.sqrt(gh / anchor_wh[a, 1]) / 2
-
         # One-hot encoding of label
         tcls[b, a, gj, gi, tc] = 1
         tconf[b, a, gj, gi] = 1
-
+        tduration[b, a, gj, gi, td] = 1
         if batch_report:
             # predicted classes and confidence
             tb = torch.cat((gx - gw / 2, gy - gh / 2, gx + gw / 2, gy + gh / 2)).view(4, -1).t()  # target boxes
@@ -284,7 +284,7 @@ def build_targets(pred_boxes, pred_conf, pred_cls, target, anchor_wh, nA, nC, nG
             FP[b, i] = (pconf > 0.5) & (TP[b, i] == 0)  # coordinates or class are wrong
             FN[b, i] = pconf <= 0.5  # confidence score is too low (set to zero)
 
-    return tx, ty, tw, th, tconf, tcls, TP, FP, FN, TC
+    return tx, ty, tw, th, tconf, tcls,tduration, TP, FP, FN, TC
 
 
 def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
@@ -340,8 +340,8 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
         # for c in range(60):
         # shape_likelihood[:, c] = multivariate_normal.pdf(x, mean=mat['class_mu'][c, :2], cov=mat['class_cov'][c, :2, :2])
 
-        class_prob, class_pred = torch.max(F.softmax(pred[:, 5:], 1), 1)
-
+        class_prob, class_pred = torch.max(F.softmax(pred[:, 5:12], 1), 1)
+        duration_prob, duration_pred = torch.max(F.softmax(pred[:,12:],1),1)
         v = ((pred[:, 4] > conf_thres) & (class_prob > .3))
         v = v.nonzero().squeeze()
         if len(v.shape) == 0:
@@ -351,6 +351,8 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
         class_prob = class_prob[v]
         class_pred = class_pred[v]
 
+        duration_prob = duration_prob[v]
+        duration_pred = duration_pred[v]
         # If none are remaining => process next image
         nP = pred.shape[0]
         if not nP:
@@ -365,16 +367,16 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
         pred[:, :4] = box_corner
 
         # Detections ordered as (x1, y1, x2, y2, obj_conf, class_prob, class_pred)
-        detections = torch.cat((pred[:, :5], class_prob.float().unsqueeze(1), class_pred.float().unsqueeze(1)), 1)
+        detections = torch.cat((pred[:, :5], class_prob.float().unsqueeze(1), class_pred.float().unsqueeze(1),duration_prob.float().unsqueeze(1),duration_pred.float().unsqueeze(1)), 1)
         # Iterate through all predicted classes
-        unique_labels = detections[:, -1].cpu().unique()
+        unique_labels = detections[:, -3].cpu().unique()
         if prediction.is_cuda:
             unique_labels = unique_labels.cuda(prediction.device)
 
         nms_style = 'OR'  # 'AND' or 'OR' (classical)
         for c in unique_labels:
             # Get the detections with the particular class
-            detections_class = detections[detections[:, -1] == c]
+            detections_class = detections[detections[:, -3] == c]
             # Sort the detections by maximum objectness confidence
             _, conf_sort_index = torch.sort(detections_class[:, 4], descending=True)
             detections_class = detections_class[conf_sort_index]

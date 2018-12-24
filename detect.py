@@ -12,17 +12,17 @@ f_path = os.path.dirname(os.path.realpath(__file__)) + '/'
 parser = argparse.ArgumentParser()
 # Get data configuration
 
-parser.add_argument('-image_folder', type=str, default='data/samples', help='path to images')
+parser.add_argument('-image_folder', type=str, default='data/crop1_raw_img1', help='path to images')
 parser.add_argument('-output_folder', type=str, default='output', help='path to outputs')
 parser.add_argument('-plot_flag', type=bool, default=True)
 parser.add_argument('-txt_out', type=bool, default=False)
 
-parser.add_argument('-cfg', type=str, default=f_path + 'cfg/yolov3.cfg', help='cfg file path')
-parser.add_argument('-class_path', type=str, default=f_path + 'data/coco.names', help='path to class label file')
-parser.add_argument('-conf_thres', type=float, default=0.50, help='object confidence threshold')
-parser.add_argument('-nms_thres', type=float, default=0.45, help='iou threshold for non-maximum suppression')
+parser.add_argument('-cfg', type=str, default=f_path + 'cfg/yolo3-832.cfg', help='cfg file path')
+parser.add_argument('-class_path', type=str, default=f_path + 'data/omr.names', help='path to class label file')
+parser.add_argument('-conf_thres', type=float, default=0.3, help='object confidence threshold')
+parser.add_argument('-nms_thres', type=float, default=0.50, help='iou threshold for non-maximum suppression')
 parser.add_argument('-batch_size', type=int, default=1, help='size of the batches')
-parser.add_argument('-img_size', type=int, default=32 * 13, help='size of each image dimension')
+parser.add_argument('-img_size', type=int, default=32 *36, help='size of each image dimension')
 opt = parser.parse_args()
 print(opt)
 
@@ -34,16 +34,16 @@ def main(opt):
     # Load model
     model = Darknet(opt.cfg, opt.img_size)
 
-    weights_path = f_path + 'weights/yolov3.pt'
+    weights_path = f_path + 'weights/best.pt'
     if weights_path.endswith('.weights'):  # saved in darknet format
         load_weights(model, weights_path)
-    else:  # endswith('.pt'), saved in pytorch format
-        if weights_path.endswith('weights/yolov3.pt') and not os.path.isfile(weights_path):
-            os.system('wget https://storage.googleapis.com/ultralytics/yolov3.pt -O ' + weights_path)
+   # else:  # endswith('.pt'), saved in pytorch format
+    #    if weights_path.endswith('weights/yolov3.pt') and not os.path.isfile(weights_path):
+    #        os.system('wget https://storage.googleapis.com/ultralytics/yolov3.pt -O ' + weights_path)
 
-        checkpoint = torch.load(weights_path, map_location='cpu')
-        model.load_state_dict(checkpoint['model'])
-        del checkpoint
+    checkpoint = torch.load(weights_path, map_location='cpu')
+    model.load_state_dict(checkpoint['model'])
+    del checkpoint
 
         # current = model.state_dict()
         # saved = checkpoint['model']
@@ -72,7 +72,6 @@ def main(opt):
         with torch.no_grad():
             pred = model(torch.from_numpy(img).unsqueeze(0).to(device))
             pred = pred[pred[:, :, 4] > opt.conf_thres]
-
             if len(pred) > 0:
                 detections = non_max_suppression(pred.unsqueeze(0), opt.conf_thres, opt.nms_thres)
                 img_detections.extend(detections)
@@ -82,7 +81,7 @@ def main(opt):
         prev_time = time.time()
 
     # Bounding-box colors
-    color_list = [[random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)] for _ in range(len(classes))]
+    color_list = [[random.randint(0,200), random.randint(0, 200), random.randint(0, 200)] for _ in range(len(classes))]
 
     if len(img_detections) == 0:
         return
@@ -93,7 +92,7 @@ def main(opt):
 
         if opt.plot_flag:
             img = cv2.imread(path)
-
+        import pdb;pdb.set_trace()
         # The amount of padding that was added
         pad_x = max(img.shape[0] - img.shape[1], 0) * (opt.img_size / max(img.shape))
         pad_y = max(img.shape[1] - img.shape[0], 0) * (opt.img_size / max(img.shape))
@@ -103,7 +102,7 @@ def main(opt):
 
         # Draw bounding boxes and labels of detections
         if detections is not None:
-            unique_classes = detections[:, -1].cpu().unique()
+            unique_classes = detections[:, -3].cpu().unique()
             bbox_colors = random.sample(color_list, len(unique_classes))
 
             # write results to .txt file
@@ -114,12 +113,11 @@ def main(opt):
 
             for i in unique_classes:
                 n = (detections[:, -1].cpu() == i).sum()
-                print('%g %ss' % (n, classes[int(i)]))
-
-            for x1, y1, x2, y2, conf, cls_conf, cls_pred in detections:
+               # print('%g %ss' % (n, classes[int(i)]))
+            for x1, y1, x2, y2, conf, cls_conf, cls_pred,duration_conf, duration_pred in detections:
                 # Rescale coordinates to original dimensions
-                box_h = ((y2 - y1) / unpad_h) * img.shape[0]
-                box_w = ((x2 - x1) / unpad_w) * img.shape[1]
+                box_h = ((y2 - y1) /unpad_h ) * img.shape[0]
+                box_w = ((x2 - x1) /unpad_w ) * img.shape[1]
                 y1 = (((y1 - pad_y // 2) / unpad_h) * img.shape[0]).round().item()
                 x1 = (((x1 - pad_x // 2) / unpad_w) * img.shape[1]).round().item()
                 x2 = (x1 + box_w).round().item()
@@ -127,13 +125,15 @@ def main(opt):
                 x1, y1, x2, y2 = max(x1, 0), max(y1, 0), max(x2, 0), max(y2, 0)
 
                 # write to file
+               # if 1:
                 if opt.txt_out:
                     with open(results_txt_path, 'a') as file:
-                        file.write(('%g %g %g %g %g %g \n') % (x1, y1, x2, y2, cls_pred, cls_conf * conf))
+                        file.write((' %g %g %g %g %g %g %g\n') % (x1, y1, x2, y2, cls_pred, cls_conf * conf,duration_pred))
 
                 if opt.plot_flag:
                     # Add the bbox to the plot
-                    label = '%s %.2f' % (classes[int(cls_pred)], conf)
+                    label = '%s%d' % (classes[int(cls_pred)] ,int(duration_pred))
+                    
                     color = bbox_colors[int(np.where(unique_classes == int(cls_pred))[0])]
                     plot_one_box([x1, y1, x2, y2], img, label=label, color=color)
 

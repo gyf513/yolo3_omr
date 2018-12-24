@@ -8,11 +8,11 @@ from utils.utils import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-epochs', type=int, default=100, help='number of epochs')
-parser.add_argument('-batch_size', type=int, default=16, help='size of each image batch')
-parser.add_argument('-data_config_path', type=str, default='cfg/coco.data', help='data config file path')
-parser.add_argument('-cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
-parser.add_argument('-img_size', type=int, default=32 * 13, help='size of each image dimension')
-parser.add_argument('-resume', default=False, help='resume training flag')
+parser.add_argument('-batch_size', type=int, default=8, help='size of each image batch')
+parser.add_argument('-data_config_path', type=str, default='cfg/omr.data', help='data config file path')
+parser.add_argument('-cfg', type=str, default='cfg/yolo3-832.cfg', help='cfg file path')
+parser.add_argument('-img_size', type=int, default=576, help='size of each image dimension')
+parser.add_argument('-resume', default=False, help='weights/backup5.pt')
 parser.add_argument('-batch_report', default=False, help='report TP, FP, FN, P and R per batch (slower)')
 parser.add_argument('-optimizer', default='SGD', help='Optimizer')
 opt = parser.parse_args()
@@ -36,18 +36,13 @@ if cuda:
 
 def main(opt):
     os.makedirs('weights', exist_ok=True)
-
     # Configure run
     data_config = parse_data_config(opt.data_config_path)
     num_classes = int(data_config['classes'])
-    if platform == 'darwin':  # MacOS (local)
-        train_path = data_config['train']
-    else:  # linux (cloud, i.e. gcp)
-        train_path = '../coco/trainvalno5k.part'
+    train_path = data_config['train']
 
     # Initialize model
     model = Darknet(opt.cfg, opt.img_size)
-
     # Get dataloader
     dataloader = load_images_and_labels(train_path, batch_size=opt.batch_size, img_size=opt.img_size, augment=True)
 
@@ -55,7 +50,7 @@ def main(opt):
     start_epoch = 0
     best_loss = float('inf')
     if opt.resume:
-        checkpoint = torch.load('weights/latest.pt', map_location='cpu')
+        checkpoint = torch.load('weights/backup5.pt', map_location='cpu')
 
         model.load_state_dict(checkpoint['model'])
         if torch.cuda.device_count() > 1:
@@ -87,9 +82,9 @@ def main(opt):
             os.system('wget https://pjreddie.com/media/files/darknet53.conv.74 -P weights')
         load_weights(model, 'weights/darknet53.conv.74')
 
-        if torch.cuda.device_count() > 1:
-            print('Using ', torch.cuda.device_count(), ' GPUs')
-            model = nn.DataParallel(model)
+       # if torch.cuda.device_count() > 1:
+       #     print('Using ', torch.cuda.device_count(), ' GPUs')
+       #     model = nn.DataParallel(model)
         model.to(device).train()
 
         # Set optimizer
@@ -104,14 +99,16 @@ def main(opt):
     model_info(model)
     t0, t1 = time.time(), time.time()
     mean_recall, mean_precision = 0, 0
-    print('%11s' * 16 % (
-        'Epoch', 'Batch', 'x', 'y', 'w', 'h', 'conf', 'cls', 'total', 'P', 'R', 'nTargets', 'TP', 'FP', 'FN', 'time'))
+    print('%11s' * 17 % (
+        'Epoch', 'Batch', 'x', 'y', 'w', 'h', 'conf', 'cls', 'duration','total', 'P', 'R', 'nTargets', 'TP', 'FP', 'FN', 'time'))
     for epoch in range(opt.epochs):
         epoch += start_epoch
 
         # Update scheduler (automatic)
         # scheduler.step()
 
+        #test.opt.weights_path = 'weights/darknet53.conv.74'
+        #mAP, R, P = test.main(test.opt)
         # Update scheduler (manual)  at 0, 54, 61 epochs to 1e-3, 1e-4, 1e-5
         if epoch > 50:
             lr = 1e-4
@@ -164,9 +161,9 @@ def main(opt):
                 if k.sum() > 0:
                     mean_recall = recall[k].mean()
 
-            s = ('%11s%11s' + '%11.3g' * 14) % (
+            s = ('%11s%11s' + '%11.3g' * 15) % (
                 '%g/%g' % (epoch, opt.epochs - 1), '%g/%g' % (i, len(dataloader) - 1), rloss['x'],
-                rloss['y'], rloss['w'], rloss['h'], rloss['conf'], rloss['cls'],
+                rloss['y'], rloss['w'], rloss['h'], rloss['conf'], rloss['cls'],rloss['duration'],
                 rloss['loss'], mean_precision, mean_recall, model.losses['nT'], model.losses['TP'],
                 model.losses['FP'], model.losses['FN'], time.time() - t1)
             t1 = time.time()
@@ -182,18 +179,18 @@ def main(opt):
                       'best_loss': best_loss,
                       'model': model.state_dict(),
                       'optimizer': optimizer.state_dict()}
-        torch.save(checkpoint, 'weights/latest.pt')
+        torch.save(checkpoint, 'weights1/latest.pt')
 
         # Save best checkpoint
         if best_loss == loss_per_target:
-            os.system('cp weights/latest.pt weights/best.pt')
+            os.system('cp weights1/latest.pt weights1/best.pt')
 
         # Save backup weights every 5 epochs
         if (epoch > 0) & (epoch % 5 == 0):
-            os.system('cp weights/latest.pt weights/backup' + str(epoch) + '.pt')
+            os.system('cp weights1/latest.pt weights1/backup' + str(epoch) + '.pt')
 
         # Calculate mAP
-        test.opt.weights_path = 'weights/latest.pt'
+        test.opt.weights_path = 'weights1/latest.pt'
         mAP, R, P = test.main(test.opt)
 
         # Write epoch results

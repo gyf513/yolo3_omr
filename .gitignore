@@ -28,7 +28,11 @@ temp-plot.html
 __pycache__/
 *.py[cod]
 *$py.class
+data/
 
+imgs.tar.gz
+output.tra.gz
+weights/
 # C extensions
 *.so
 
